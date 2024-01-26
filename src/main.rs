@@ -6,14 +6,15 @@ extern crate anyhow;
 extern crate clap;
 extern crate cpal;
 
-use std::sync::Arc;
+use rand::prelude::*;
+use std::{slice::Chunks, sync::Arc};
 
 use realfft::{ComplexToReal, RealFftPlanner, RealToComplex};
 use rustfft::num_complex::Complex;
 
 use cpal::{
     traits::{DeviceTrait, HostTrait, StreamTrait},
-    SizedSample,
+    SizedSample, StreamConfig,
 };
 use cpal::{FromSample, Sample};
 
@@ -129,6 +130,13 @@ pub fn host_device_setup(
     let config = device.default_output_config()?;
     println!("Default output config : {:?}", config);
 
+    // TODO make this more elegant
+    let configured = StreamConfig {
+        channels: config.channels(),
+        sample_rate: config.sample_rate(),
+        buffer_size: cpal::BufferSize::Fixed(1024),
+    };
+
     Ok((host, device, config))
 }
 
@@ -151,25 +159,29 @@ where
     let time_at_start = std::time::Instant::now();
     println!("Time at start: {:?}", time_at_start);
 
+    // TODO make size real
+    let mut lenia = Lenia::new(0.5, 1024);
+
     let stream = device.build_output_stream(
         config,
         move |output: &mut [T], _: &cpal::OutputCallbackInfo| {
             // for 0-1s play sine, 1-2s play square, 2-3s play saw, 3-4s play triangle_wave
-            let time_since_start = std::time::Instant::now()
-                .duration_since(time_at_start)
-                .as_secs_f32();
-            if time_since_start < 1.0 {
-                oscillator.set_waveform(Waveform::Sine);
-            } else if time_since_start < 2.0 {
-                oscillator.set_waveform(Waveform::Triangle);
-            } else if time_since_start < 3.0 {
-                oscillator.set_waveform(Waveform::Square);
-            } else if time_since_start < 4.0 {
-                oscillator.set_waveform(Waveform::Saw);
-            } else {
-                oscillator.set_waveform(Waveform::Sine);
-            }
-            process_frame(output, &mut oscillator, num_channels)
+            // let time_since_start = std::time::Instant::now()
+            //     .duration_since(time_at_start)
+            //     .as_secs_f32();
+            // if time_since_start < 1.0 {
+            //     oscillator.set_waveform(Waveform::Sine);
+            // } else if time_since_start < 2.0 {
+            //     oscillator.set_waveform(Waveform::Triangle);
+            // } else if time_since_start < 3.0 {
+            //     oscillator.set_waveform(Waveform::Square);
+            // } else if time_since_start < 4.0 {
+            //     oscillator.set_waveform(Waveform::Saw);
+            // } else {
+            //     oscillator.set_waveform(Waveform::Sine);
+            // }
+
+            process_frame(output, &mut lenia, num_channels)
         },
         err_fn,
         None,
@@ -180,17 +192,26 @@ where
 
 fn process_frame<SampleType>(
     output: &mut [SampleType],
-    oscillator: &mut Oscillator,
+    lenia: &mut Lenia,
+    // oscillator: &mut Oscillator,
     num_channels: usize,
 ) where
     SampleType: Sample + FromSample<f32>,
 {
+    lenia.step();
+    let world = &mut lenia.world;
     for frame in output.chunks_mut(num_channels) {
-        let value: SampleType = SampleType::from_sample(oscillator.tick());
+        // let value: SampleType = SampleType::from_sample(oscillator.tick());
+        let new: Vec<SampleType> = world
+            .iter_mut()
+            .map(|s| SampleType::from_sample(*s))
+            .collect();
 
         // copy the same value to all channels
+        let mut i = 0;
         for sample in frame.iter_mut() {
-            *sample = value;
+            *sample = new[i];
+            i += 1;
         }
     }
 }
@@ -206,6 +227,7 @@ pub struct Lenia {
 
 impl Lenia {
     pub fn new(factor: f32, size: usize) -> Lenia {
+        let mut rng = rand::thread_rng();
         let mut k = vec![0.0; size / 4];
         for i in 0..(k.len() / 2) {
             if i == 0 {
@@ -223,9 +245,10 @@ impl Lenia {
         let mut planner = RealFftPlanner::<f32>::new();
         let forward: Arc<dyn RealToComplex<f32>> = planner.plan_fft_forward(size);
         let inverse: Arc<dyn ComplexToReal<f32>> = planner.plan_fft_inverse(size);
+        let world = (0..size).map(|_| rng.gen()).collect();
 
         return Lenia {
-            world: vec![0.0; size],
+            world,
             kernel: k,
             factor,
             size,
