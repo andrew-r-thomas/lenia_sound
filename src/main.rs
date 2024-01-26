@@ -241,7 +241,7 @@ impl Lenia {
             let mut c = conv[i];
             c = Lenia::growth(c);
 
-            let t = c * 0.5;
+            let t = c * self.factor;
             if t < 0.0 {
                 conv[i] = 0.0;
             } else if t > 1.0 {
