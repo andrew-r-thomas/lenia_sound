@@ -11,7 +11,6 @@ extern crate cpal;
 use std::sync::Arc;
 
 use rand::prelude::*;
-// use std::{slice::Chunks, sync::Arc};
 
 use realfft::{ComplexToReal, RealFftPlanner, RealToComplex};
 use rustfft::num_complex::Complex;
@@ -21,6 +20,7 @@ use cpal::{
     SizedSample,
 };
 use cpal::{FromSample, Sample};
+use ringbuf::StaticRb;
 
 fn main() -> anyhow::Result<()> {
     let stream = stream_setup_for()?;
@@ -86,6 +86,10 @@ where
 
     let time_at_start = std::time::Instant::now();
     println!("Time at start: {:?}", time_at_start);
+
+    // TODO make these types a little better
+    // let mut rb = StaticRb::<f32, 1024>::default();
+    // let (mut prod, mut cons) = rb.split_ref();
 
     // TODO make size real
     let mut lenia = Lenia::new(0.5, 512);
