@@ -5,3 +5,4 @@ zig-out/
 # Added by cargo
 
 /target
+scratch/

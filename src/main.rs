@@ -149,7 +149,7 @@ impl Lenia {
             let x: f32 = i as f32 / (k.len() / 2) as f32;
 
             // TODO make kernel more configurable
-            let val = f32::exp2(4.0 - (4.0 / (4.0 * x * (1.0 - x))));
+            let val = f32::exp(4.0 - (4.0 / (4.0 * x * (1.0 - x))));
 
             k[i] = val;
             k[i + ((size / 4) / 2)] = val;
@@ -159,6 +159,7 @@ impl Lenia {
         let forward: Arc<dyn RealToComplex<f32>> = planner.plan_fft_forward(size / 2);
         let inverse: Arc<dyn ComplexToReal<f32>> = planner.plan_fft_inverse(size / 2);
         let world = (0..size).map(|_| rng.gen()).collect();
+        println!("{:?}", k);
 
         return Lenia {
             world,
