@@ -1,6 +1,8 @@
 /* This example expose parameter to pass generator of sample.
 Good starting point for integration of cpal into your application.
 */
+// TODO add a ringbuf so that we dont have to care how large
+// the chunks coming in are
 
 extern crate anyhow;
 extern crate clap;
@@ -23,7 +25,7 @@ use cpal::{FromSample, Sample};
 fn main() -> anyhow::Result<()> {
     let stream = stream_setup_for()?;
     stream.play()?;
-    std::thread::sleep(std::time::Duration::from_millis(4000));
+    std::thread::sleep(std::time::Duration::from_millis(10000));
     Ok(())
 }
 
@@ -200,9 +202,7 @@ fn process_frame<SampleType>(
 ) where
     SampleType: Sample + FromSample<f32>,
 {
-    lenia.step();
-    let world = &mut lenia.world;
-    println!("world: {:?}", world);
+    let mut world = lenia.step();
     let new: Vec<SampleType> = world
         .iter_mut()
         .map(|s| SampleType::from_sample(*s))
@@ -246,9 +246,10 @@ impl Lenia {
         }
 
         let mut planner = RealFftPlanner::<f32>::new();
-        let forward: Arc<dyn RealToComplex<f32>> = planner.plan_fft_forward(size);
-        let inverse: Arc<dyn ComplexToReal<f32>> = planner.plan_fft_inverse(size);
+        let forward: Arc<dyn RealToComplex<f32>> = planner.plan_fft_forward(size / 2);
+        let inverse: Arc<dyn ComplexToReal<f32>> = planner.plan_fft_inverse(size / 2);
         let world = (0..size).map(|_| rng.gen()).collect();
+        // println!("world {:?}", world);
 
         return Lenia {
             world,
@@ -260,30 +261,46 @@ impl Lenia {
         };
     }
 
-    pub fn step(&mut self) {
-        let mut conv = self.conv();
+    pub fn step(&mut self) -> Vec<f32> {
+        // TODO probably dont need to be cloning all this stuff
+        let world = self.world.clone();
+        println!("world during step: {:?}", world);
+        let kernel = self.kernel.clone();
+        let forward_fft = self.forward_fft.clone();
+        let inverse_fft = self.inverse_fft.clone();
+
+        let mut conv = Lenia::conv(&world, kernel, self.size / 4, forward_fft, inverse_fft);
+        // println!("oook: {:?}", conv);
 
         for i in 0..self.size {
             let mut c = conv[i];
             c = Lenia::growth(c);
+            let w = world[i];
 
             let t = c * self.factor;
-            if t < 0.0 {
+            let new = w + t;
+            if new < 0.0 {
                 conv[i] = 0.0;
-            } else if t > 1.0 {
+            } else if new > 1.0 {
                 conv[i] = 1.0;
             } else {
-                conv[i] = t;
+                conv[i] = new;
             }
         }
 
-        self.world = conv;
+        self.world = conv.clone();
+        conv
     }
 
-    fn conv(&mut self) -> Vec<f32> {
-        let world = &self.world;
+    fn conv(
+        world: &Vec<f32>,
+        mut kernel: Vec<f32>,
+        chunk_size: usize,
+        forward_fft: Arc<dyn RealToComplex<f32>>,
+        inverse_fft: Arc<dyn ComplexToReal<f32>>,
+    ) -> Vec<f32> {
+        // println!("world during conv step: {:?}", world);
 
-        let chunk_size = self.size / 4;
         let mut chunk_1 = Vec::from(&world[0..chunk_size]);
         let mut chunk_2 = Vec::from(&world[chunk_size..(chunk_size * 2)]);
         let mut chunk_3 = Vec::from(&world[(chunk_size * 2)..(chunk_size * 3)]);
@@ -293,70 +310,67 @@ impl Lenia {
         chunk_2.extend(&zeros);
         chunk_3.extend(&zeros);
 
-        let kernel_slice = self.kernel.as_mut_slice();
-        let mut kernel_freq: Vec<Complex<f32>> = self.forward_fft.make_output_vec();
-        let _ = self
-            .forward_fft
-            .process(kernel_slice, kernel_freq.as_mut_slice());
+        let mut kernel_freq: Vec<Complex<f32>> = forward_fft.make_output_vec();
+        kernel.extend(&zeros);
+        let _ = forward_fft.process(&mut kernel, &mut kernel_freq).unwrap();
 
-        let mut chunk_1_freq: Vec<Complex<f32>> = self.forward_fft.make_output_vec();
-        let mut chunk_2_freq: Vec<Complex<f32>> = self.forward_fft.make_output_vec();
-        let mut chunk_3_freq: Vec<Complex<f32>> = self.forward_fft.make_output_vec();
+        let mut chunk_1_freq: Vec<Complex<f32>> = forward_fft.make_output_vec();
+        let mut chunk_2_freq: Vec<Complex<f32>> = forward_fft.make_output_vec();
+        let mut chunk_3_freq: Vec<Complex<f32>> = forward_fft.make_output_vec();
 
-        let _ = self
-            .forward_fft
-            .process(chunk_1.as_mut_slice(), chunk_1_freq.as_mut_slice());
+        let _ = forward_fft
+            .process(&mut chunk_1, &mut chunk_1_freq)
+            .unwrap();
 
-        let _ = self
-            .forward_fft
-            .process(chunk_2.as_mut_slice(), chunk_2_freq.as_mut_slice());
+        let _ = forward_fft
+            .process(&mut chunk_2, &mut chunk_2_freq)
+            .unwrap();
 
-        let _ = self
-            .forward_fft
-            .process(chunk_3.as_mut_slice(), chunk_3_freq.as_mut_slice());
+        let _ = forward_fft
+            .process(&mut chunk_3, &mut chunk_3_freq)
+            .unwrap();
 
-        let mut conv_1 = self.inverse_fft.make_output_vec();
-        let mut conv_1_freq: Vec<Complex<f32>> = self.inverse_fft.make_input_vec();
-        let mut conv_2 = self.inverse_fft.make_output_vec();
-        let mut conv_2_freq: Vec<Complex<f32>> = self.inverse_fft.make_input_vec();
-        let mut conv_3 = self.inverse_fft.make_output_vec();
-        let mut conv_3_freq: Vec<Complex<f32>> = self.inverse_fft.make_input_vec();
+        let mut conv_1 = inverse_fft.make_output_vec();
+        let mut conv_1_freq: Vec<Complex<f32>> = inverse_fft.make_input_vec();
+        let mut conv_2 = inverse_fft.make_output_vec();
+        let mut conv_2_freq: Vec<Complex<f32>> = inverse_fft.make_input_vec();
+        let mut conv_3 = inverse_fft.make_output_vec();
+        let mut conv_3_freq: Vec<Complex<f32>> = inverse_fft.make_input_vec();
 
         // TODO figure out how exactly to do this multiply;
-        for i in 0..(self.size / 2) {
+        for i in 0..(chunk_size) {
             conv_1_freq[i] = chunk_1_freq[i] * kernel_freq[i];
             conv_2_freq[i] = chunk_2_freq[i] * kernel_freq[i];
             conv_3_freq[i] = chunk_3_freq[i] * kernel_freq[i];
         }
 
-        let _ = self
-            .inverse_fft
-            .process(conv_1_freq.as_mut_slice(), conv_1.as_mut_slice());
+        let _ = inverse_fft.process(&mut conv_1_freq, &mut conv_1);
 
-        let _ = self
-            .inverse_fft
-            .process(conv_2_freq.as_mut_slice(), conv_2.as_mut_slice());
+        let _ = inverse_fft.process(&mut conv_2_freq, &mut conv_2);
 
-        let _ = self
-            .inverse_fft
-            .process(conv_3_freq.as_mut_slice(), conv_3.as_mut_slice());
+        let _ = inverse_fft.process(&mut conv_3_freq, &mut conv_3);
 
         // TODO this is really not fast (and its ugly) (and gross ew)
-        let mut conv: Vec<f32> = vec![0.0; self.size];
-        for i in 0..(self.size / 2) {
+        let mut conv: Vec<f32> = vec![0.0; chunk_size * 4];
+        for i in 0..(chunk_size * 2) {
             conv[i] = conv_1[i];
         }
-        for i in 0..(self.size / 2) {
-            conv[i + (self.size / 4)] += conv_2[i];
+        for i in 0..(chunk_size * 2) {
+            conv[i + (chunk_size * 2)] += conv_2[i];
         }
-        for i in 0..(self.size / 2) {
-            conv[i + (self.size / 2)] += conv_3[i];
+        for i in 0..(chunk_size * 2) {
+            conv[i + (chunk_size * 2)] += conv_3[i];
         }
 
         return conv;
     }
 
     fn growth(g: f32) -> f32 {
-        2.0 * f32::exp2(((g - 0.33).powf(2.0)) / -0.01) - 1.0
+        let step1 = g - 0.33;
+        let step2 = step1 * step1;
+        let step3 = step2 / -0.01;
+        let step4 = f32::exp(step3);
+        let step5 = step4 * 2.0;
+        step5 - 1.0
     }
 }
