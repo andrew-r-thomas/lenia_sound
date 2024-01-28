@@ -29,77 +29,6 @@ fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-// pub enum Waveform {
-//     Sine,
-//     Square,
-//     Saw,
-//     Triangle,
-// }
-
-// pub struct Oscillator {
-//     pub sample_rate: f32,
-//     pub waveform: Waveform,
-//     pub current_sample_index: f32,
-//     pub frequency_hz: f32,
-// }
-
-// impl Oscillator {
-//     fn advance_sample(&mut self) {
-//         self.current_sample_index = (self.current_sample_index + 1.0) % self.sample_rate;
-//     }
-
-//     fn set_waveform(&mut self, waveform: Waveform) {
-//         self.waveform = waveform;
-//     }
-
-//     fn calculate_sine_output_from_freq(&self, freq: f32) -> f32 {
-//         let two_pi = 2.0 * std::f32::consts::PI;
-//         (self.current_sample_index * freq * two_pi / self.sample_rate).sin()
-//     }
-
-//     fn is_multiple_of_freq_above_nyquist(&self, multiple: f32) -> bool {
-//         self.frequency_hz * multiple > self.sample_rate / 2.0
-//     }
-
-//     fn sine_wave(&mut self) -> f32 {
-//         self.advance_sample();
-//         self.calculate_sine_output_from_freq(self.frequency_hz)
-//     }
-
-//     fn generative_waveform(&mut self, harmonic_index_increment: i32, gain_exponent: f32) -> f32 {
-//         self.advance_sample();
-//         let mut output = 0.0;
-//         let mut i = 1;
-//         while !self.is_multiple_of_freq_above_nyquist(i as f32) {
-//             let gain = 1.0 / (i as f32).powf(gain_exponent);
-//             output += gain * self.calculate_sine_output_from_freq(self.frequency_hz * i as f32);
-//             i += harmonic_index_increment;
-//         }
-//         output
-//     }
-
-//     fn square_wave(&mut self) -> f32 {
-//         self.generative_waveform(2, 1.0)
-//     }
-
-//     fn saw_wave(&mut self) -> f32 {
-//         self.generative_waveform(1, 1.0)
-//     }
-
-//     fn triangle_wave(&mut self) -> f32 {
-//         self.generative_waveform(2, 2.0)
-//     }
-
-//     fn tick(&mut self) -> f32 {
-//         match self.waveform {
-//             Waveform::Sine => self.sine_wave(),
-//             Waveform::Square => self.square_wave(),
-//             Waveform::Saw => self.saw_wave(),
-//             Waveform::Triangle => self.triangle_wave(),
-//         }
-//     }
-// }
-
 pub fn stream_setup_for() -> Result<cpal::Stream, anyhow::Error>
 where
 {
@@ -152,12 +81,7 @@ where
     T: SizedSample + FromSample<f32>,
 {
     let num_channels = config.channels as usize;
-    // let mut oscillator = Oscillator {
-    //     waveform: Waveform::Sine,
-    //     sample_rate: config.sample_rate.0 as f32,
-    //     current_sample_index: 0.0,
-    //     frequency_hz: 440.0,
-    // };
+
     let err_fn = |err| eprintln!("Error building output sound stream: {}", err);
 
     let time_at_start = std::time::Instant::now();
@@ -169,22 +93,6 @@ where
     let stream = device.build_output_stream(
         config,
         move |output: &mut [T], _: &cpal::OutputCallbackInfo| {
-            // for 0-1s play sine, 1-2s play square, 2-3s play saw, 3-4s play triangle_wave
-            // let time_since_start = std::time::Instant::now()
-            //     .duration_since(time_at_start)
-            //     .as_secs_f32();
-            // if time_since_start < 1.0 {
-            //     oscillator.set_waveform(Waveform::Sine);
-            // } else if time_since_start < 2.0 {
-            //     oscillator.set_waveform(Waveform::Triangle);
-            // } else if time_since_start < 3.0 {
-            //     oscillator.set_waveform(Waveform::Square);
-            // } else if time_since_start < 4.0 {
-            //     oscillator.set_waveform(Waveform::Saw);
-            // } else {
-            //     oscillator.set_waveform(Waveform::Sine);
-            // }
-
             process_frame(output, &mut lenia, num_channels)
         },
         err_fn,
@@ -208,8 +116,6 @@ fn process_frame<SampleType>(
         .map(|s| SampleType::from_sample(*s))
         .collect();
     for frame in output.chunks_mut(num_channels) {
-        // let value: SampleType = SampleType::from_sample(oscillator.tick());
-
         // copy the same value to all channels
         let mut i = 0;
         for sample in frame.iter_mut() {
@@ -249,7 +155,6 @@ impl Lenia {
         let forward: Arc<dyn RealToComplex<f32>> = planner.plan_fft_forward(size / 2);
         let inverse: Arc<dyn ComplexToReal<f32>> = planner.plan_fft_inverse(size / 2);
         let world = (0..size).map(|_| rng.gen()).collect();
-        // println!("world {:?}", world);
 
         return Lenia {
             world,
@@ -270,7 +175,6 @@ impl Lenia {
         let inverse_fft = self.inverse_fft.clone();
 
         let mut conv = Lenia::conv(&world, kernel, self.size / 4, forward_fft, inverse_fft);
-        // println!("oook: {:?}", conv);
 
         for i in 0..self.size {
             let mut c = conv[i];
@@ -299,8 +203,6 @@ impl Lenia {
         forward_fft: Arc<dyn RealToComplex<f32>>,
         inverse_fft: Arc<dyn ComplexToReal<f32>>,
     ) -> Vec<f32> {
-        // println!("world during conv step: {:?}", world);
-
         let mut chunk_1 = Vec::from(&world[0..chunk_size]);
         let mut chunk_2 = Vec::from(&world[chunk_size..(chunk_size * 2)]);
         let mut chunk_3 = Vec::from(&world[(chunk_size * 2)..(chunk_size * 3)]);
@@ -337,7 +239,6 @@ impl Lenia {
         let mut conv_3 = inverse_fft.make_output_vec();
         let mut conv_3_freq: Vec<Complex<f32>> = inverse_fft.make_input_vec();
 
-        // TODO figure out how exactly to do this multiply;
         for i in 0..(chunk_size) {
             conv_1_freq[i] = chunk_1_freq[i] * kernel_freq[i];
             conv_2_freq[i] = chunk_2_freq[i] * kernel_freq[i];
