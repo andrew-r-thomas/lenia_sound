@@ -1,8 +1,1 @@
-zig-cache/
-zig-out/
 .DS_Store
-
-# Added by cargo
-
-/target
-scratch/
